@@ -1,0 +1,130 @@
+name: 'Repo Health Score'
+description: 'Score your repository health across testing, docs, dependencies, security, and CI/CD'
+author: 'Mansi2221'
+
+branding:
+  icon: 'activity'
+  color: 'green'
+
+inputs:
+  checks:
+    description: 'Comma-separated list of checks to run (tests,docs,deps,security,cicd). Default: all.'
+    required: false
+    default: 'tests,docs,deps,security,cicd'
+  badge:
+    description: 'Set to "true" to output a shields.io badge URL'
+    required: false
+    default: 'true'
+
+outputs:
+  score:
+    description: 'Overall health score (0-100)'
+    value: ${{ steps.aggregate.outputs.score }}
+  tests-score:
+    description: 'Testing score (0-100)'
+    value: ${{ steps.run-tests.outputs.score }}
+  docs-score:
+    description: 'Documentation score (0-100)'
+    value: ${{ steps.run-docs.outputs.score }}
+  deps-score:
+    description: 'Dependencies score (0-100)'
+    value: ${{ steps.run-deps.outputs.score }}
+  security-score:
+    description: 'Security score (0-100)'
+    value: ${{ steps.run-security.outputs.score }}
+  cicd-score:
+    description: 'CI/CD score (0-100)'
+    value: ${{ steps.run-cicd.outputs.score }}
+  badge-url:
+    description: 'Shields.io badge URL for the overall score'
+    value: ${{ steps.badge.outputs.url }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Score Testing
+      id: run-tests
+      if: contains(inputs.checks, 'tests')
+      shell: bash
+      run: bash "${{ github.action_path }}/scripts/score-tests.sh"
+
+    - name: Score Documentation
+      id: run-docs
+      if: contains(inputs.checks, 'docs')
+      shell: bash
+      run: bash "${{ github.action_path }}/scripts/score-docs.sh"
+
+    - name: Score Dependencies
+      id: run-deps
+      if: contains(inputs.checks, 'deps')
+      shell: bash
+      run: bash "${{ github.action_path }}/scripts/score-deps.sh"
+
+    - name: Score Security
+      id: run-security
+      if: contains(inputs.checks, 'security')
+      shell: bash
+      run: bash "${{ github.action_path }}/scripts/score-security.sh"
+
+    - name: Score CI/CD
+      id: run-cicd
+      if: contains(inputs.checks, 'cicd')
+      shell: bash
+      run: bash "${{ github.action_path }}/scripts/score-cicd.sh"
+
+    - name: Aggregate Scores
+      id: aggregate
+      shell: bash
+      run: |
+        total=0
+        count=0
+        for s in "${{ steps.run-tests.outputs.score }}" \
+                 "${{ steps.run-docs.outputs.score }}" \
+                 "${{ steps.run-deps.outputs.score }}" \
+                 "${{ steps.run-security.outputs.score }}" \
+                 "${{ steps.run-cicd.outputs.score }}"; do
+          if [ -n "$s" ]; then
+            total=$((total + s))
+            count=$((count + 1))
+          fi
+        done
+        if [ "$count" -gt 0 ]; then
+          score=$((total / count))
+        else
+          score=0
+        fi
+        echo "score=$score" >> "$GITHUB_OUTPUT"
+
+        # Build step summary
+        echo "## Repo Health Score: ${score}/100" >> "$GITHUB_STEP_SUMMARY"
+        echo "" >> "$GITHUB_STEP_SUMMARY"
+        bar() {
+          local val=$1 name=$2
+          if [ -z "$val" ]; then return; fi
+          local filled=$((val / 5))
+          local empty=$((20 - filled))
+          local color="red"
+          if [ "$val" -ge 80 ]; then color="brightgreen";
+          elif [ "$val" -ge 60 ]; then color="yellow";
+          elif [ "$val" -ge 40 ]; then color="orange"; fi
+          printf "| %s | \`%s%s\` | **%s**/100 |\n" \
+            "$name" \
+            "$(printf '█%.0s' $(seq 1 $filled 2>/dev/null))" \
+            "$(printf '░%.0s' $(seq 1 $empty 2>/dev/null))" \
+            "$val" >> "$GITHUB_STEP_SUMMARY"
+        }
+        echo "| Category | Progress | Score |" >> "$GITHUB_STEP_SUMMARY"
+        echo "|----------|----------|-------|" >> "$GITHUB_STEP_SUMMARY"
+        bar "${{ steps.run-tests.outputs.score }}" "Testing"
+        bar "${{ steps.run-docs.outputs.score }}" "Documentation"
+        bar "${{ steps.run-deps.outputs.score }}" "Dependencies"
+        bar "${{ steps.run-security.outputs.score }}" "Security"
+        bar "${{ steps.run-cicd.outputs.score }}" "CI/CD"
+        echo "" >> "$GITHUB_STEP_SUMMARY"
+        echo "**Overall: ${score}/100**" >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Generate Badge
+      id: badge
+      if: inputs.badge == 'true'
+      shell: bash
+      run: bash "${{ github.action_path }}/scripts/generate-badge.sh" "${{ steps.aggregate.outputs.score }}"
